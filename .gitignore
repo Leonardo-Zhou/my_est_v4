@@ -1,0 +1,11 @@
+__pycache__/
+/**/__pycache__
+/**/.vscode/
+/**/*.out
+/**/temp/
+log*/*
+logs/
+logs_v1/
+logs_v2/
+logs_v3/
+splits/endovis/gt_depths.npz
