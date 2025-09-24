@@ -63,37 +63,37 @@ class SCAREDRAWDataset(SCAREDDataset):
         return depth_gt
 
     def get_K(self, folder, frame_index, side):
-        f_str = "frame_data{:06d}.json".format(0)
-        K_path = os.path.join(
-            self.data_path,
-            folder,
-            'data/frame_data',
-            f_str
-        )
-        try:
-            with open(K_path, 'r') as f:
-                data = json.load(f)
-            K = np.array(data["camera-calibration"]["KL"], dtype=np.float32)
-        except FileNotFoundError:
-            K = np.array([
-            [
-                1035.30810546875,
-                0.0,
-                596.9550170898438
-            ],
-            [
-                0.0,
-                1035.087646484375,
-                520.4100341796875
-            ],
-            [
-                0.0,
-                0.0,
-                1.0
-            ]
-        ], dtype=np.float32)
-        self.K = np.zeros((4, 4), dtype=K.dtype)
-        self.K[:3, :3] = K
-        self.K[3, 3] = 1
+        # f_str = "frame_data{:06d}.json".format(0)
+        # K_path = os.path.join(
+        #     self.data_path,
+        #     folder,
+        #     'data/frame_data',
+        #     f_str
+        # )
+        # try:
+        #     with open(K_path, 'r') as f:
+        #         data = json.load(f)
+        #     K = np.array(data["camera-calibration"]["KL"], dtype=np.float32)
+        # except FileNotFoundError:
+        #     K = np.array([
+        #         [
+        #             1035.30810546875,
+        #             0.0,
+        #             596.9550170898438
+        #         ],
+        #         [
+        #             0.0,
+        #             1035.087646484375,
+        #             520.4100341796875
+        #         ],
+        #         [
+        #             0.0,
+        #             0.0,
+        #             1.0
+        #         ]
+        #     ], dtype=np.float32)
+        # self.K = np.zeros((4, 4), dtype=K.dtype)
+        # self.K[:3, :3] = K
+        # self.K[3, 3] = 1
         return self.K
 

@@ -77,11 +77,15 @@ class Options:
           self.parser.add_argument("--pps_shading",
                                    type=float,
                                    help="PPS shading smoothness weight",
-                                   default=0.5)
+                                   default=0.1)
           self.parser.add_argument("--specular_l1_sparsity",
                                    type=float,
                                    help="L1 sparsity constraint for specular component",
                                    default=0.05)  # 新增L1稀疏约束
+          self.parser.add_argument("--pps_corr",
+                                   type=float,
+                                   help="PPS*Albedo 与 I - Specular 的CORR损失权重",
+                                   default=0.1)
 
           # ARCHITECTURE OPTIONS
           self.parser.add_argument("--scales",
@@ -208,6 +212,10 @@ class Options:
                          type=int,
                          help="epoch to start changing supervision signal to pps * albedo",
                          default=15)
+
+          self.parser.add_argument("--change_type",
+                                   type=str,
+                                   default='0')
 
     def parse(self):
           self.options = self.parser.parse_args()

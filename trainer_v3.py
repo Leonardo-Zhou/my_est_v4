@@ -145,8 +145,6 @@ class Trainer:
 
         self.save_opts()
 
-
-        
     def set_train(self):
         """Convert all models to training mode"""
         for model_name in self.models:
@@ -428,7 +426,7 @@ class Trainer:
             loss_reconstruction += (
                 self.compute_reprojection_loss(
                     inputs[("color_aug", frame_id, 0)],   # 原始输入图像（经过数据增强）
-                    outputs[("reprojection_color", 0, frame_id)]  # 重建图像（A×S+R）
+                    outputs[("reconstruction_color", 0, frame_id)]  # 重建图像（A×S+R）
                 )
             ).mean()
 

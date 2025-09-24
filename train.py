@@ -20,9 +20,10 @@ def setup_debug_args():
         opts.load_weights_folder = "./logs/nonlambertian_2025-08-28-21-59-37/models/weights_19"
 
         # opts.load_weights_folder = "./logs/nonlambertian_2025-08-28-21-59-37/models/weights_19"
-
+        change_name = '1.3'
         opts.data_path = "/mnt/data/publicData/MICCAI19_SCARED/train"
-        opts.model_name = 'Change1.1'
+        opts.model_name = f'Change{change_name}'
+        opts.change_type = change_name
         opts.log_dir = "./logs_v1"
         opts.num_epochs = 30
         opts.batch_size = 12

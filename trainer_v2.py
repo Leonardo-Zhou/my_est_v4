@@ -280,7 +280,7 @@ class Trainer:
             outputs[("specular", 0, f_i)] = specular
             
             # 使用就地操作减少内存分配: I = A × S + R
-            outputs[("reprojection_color", 0, f_i)] = torch.addcmul(
+            outputs[("reconstruction_color", 0, f_i)] = torch.addcmul(
                 specular, albedo, shading
             )
         outputs[("albedo_shading", 0, 0)] = outputs[("albedo", 0, 0)] * outputs[("shading", 0, 0)]
@@ -347,20 +347,16 @@ class Trainer:
 
             # Final reconstruction with adjusted shading
             # 修改1.1：将warp后的图像的albedo与原本的该帧图像的shading和specular相互作用，而非warp后的shading和specular。
-            outputs[("reprojection_color_warp", 0, frame_id)] = (
-                outputs[("albedo_warp", 0, frame_id)] * outputs[("shading_adjust_warp", 0, frame_id)] +
-                outputs[("specular_warp", 0, frame_id)]
-            )
-            # outputs[("reprojection_color_warp", 0, frame_id)] = (
-            #     outputs[("albedo_warp", 0, frame_id)] * outputs[("shading", 0, 0)] +
-            #     outputs[("specular", 0, 0)]
-            # )
+            if '1.1' in self.opt.change_type:
+                outputs[("reprojection_color_warp", 0, frame_id)] = (
+                    outputs[("albedo_warp", 0, frame_id)] * outputs[("shading", 0, 0)]
+                )
+            else:
+                outputs[("reprojection_color_warp", 0, frame_id)] = (
+                    outputs[("albedo_warp", 0, frame_id)] * outputs[("shading_adjust_warp", 0, frame_id)] +
+                    outputs[("specular_warp", 0, frame_id)]
+                )
 
-            # outputs[("reprojection_color_warp", 0, frame_id)] = (
-            #     outputs[("albedo_warp", 0, frame_id)] * outputs[("shading", 0, 0)]
-            # )
-
-        # 修改2.3：更改逻辑。将albedo作为监督信号，而albedo是使用(I - M) / PPS
         # 需要注意掩码Mask生成逻辑。参考代码
 
         # if self.opt.start_pps_epoch <= self.epoch:
@@ -411,7 +407,7 @@ class Trainer:
                 - ("albedo", frame_id, scale): 反照率图
                 - ("shading", frame_id, scale): 光照图
                 - ("specular", frame_id, scale): 镜面反射图
-                - ("reprojection_color", frame_id, scale): 重建图像
+                - ("reconstruction_color", frame_id, scale): 重建图像
                 - ("*_warp", frame_id, scale): 经过视角变换后的对应特征
                 - ("valid_mask", frame_id, scale): 有效像素掩码
         
@@ -436,20 +432,21 @@ class Trainer:
             loss_reconstruction += (
                 self.compute_reprojection_loss(
                     inputs[("color_aug", frame_id, 0)],   # 原始输入图像（经过数据增强）
-                    outputs[("reprojection_color", 0, frame_id)]  # 重建图像（A×S+R）
+                    outputs[("reconstruction_color", 0, frame_id)]  # 重建图像（A×S+R）
                 )
             ).mean()
             # 修改2.3：增加关于S部分的损失.包括I_s * S_s 与 I_t2s * S_t2s, I_s * S_s 与 I_t2s * S_s
-            # if frame_id != 0:
-            #     loss_reconstruction += (
-            #         self.compute_reprojection_loss(
-            #             outputs[("albedo_shading", 0, 0)],
-            #             outputs[("albedo_warp", 0, frame_id)] * outputs[("shading_adjust_warp", 0, frame_id)]
-            #         ) + self.compute_reprojection_loss(
-            #             outputs[("albedo_shading", 0, 0)],
-            #             outputs[("albedo_warp", 0, frame_id)] * outputs[("shading", 0, 0)]
-            #         )
-            #     ).mean() / 10
+            if '2.3' in self.opt.change_type:
+                if frame_id != 0:
+                    loss_reconstruction += (
+                        self.compute_reprojection_loss(
+                            outputs[("albedo_shading", 0, 0)],
+                            outputs[("albedo_warp", 0, frame_id)] * outputs[("shading_adjust_warp", 0, frame_id)]
+                        ) + self.compute_reprojection_loss(
+                            outputs[("albedo_shading", 0, 0)],
+                            outputs[("albedo_warp", 0, frame_id)] * outputs[("shading", 0, 0)]
+                        )
+                    ).mean() / 10
 
 
         # 2. 反照率一致性损失 (Albedo Consistency Loss)
@@ -522,57 +519,59 @@ class Trainer:
         #     specular = outputs[("specular", 0, frame_id)]
         #     # 通过L1范数鼓励稀疏性（使大部分像素值为0）
         #     loss_specular_smooth += torch.mean(specular)
-        lambda_sparse, lambda_tv, lambda_mask, lambda_nonneg, lambda_encourage, th, c, eps = 0.001, 0.1, 10.0, 1.0, 0.01, 0.9, 1.0, 1e-6
-        lambda_entropy=0.01
-        for frame_id in self.opt.frame_ids:
-            specular = outputs[("specular", 0, frame_id)]
-            I = inputs[("color_aug", frame_id, 0)]
-            
-            # 稀疏损失
-            L_sparse = torch.abs(specular).mean()
-            
-            # 非各向同性平滑 TV
-            dx = specular[:, :, 1:, :] - specular[:, :, :-1, :]
-            dy = specular[:, :, :, 1:] - specular[:, :, :, :-1]
-            grad_I_x = I[:, :, 1:, :] - I[:, :, :-1, :]
-            grad_I_y = I[:, :, :, 1:] - I[:, :, :, :-1]
-            g_x = torch.exp(-c * torch.abs(grad_I_x.mean(dim=1, keepdim=True)))
-            g_y = torch.exp(-c * torch.abs(grad_I_y.mean(dim=1, keepdim=True)))
-            tv_x = (g_x * torch.sqrt(dx**2 + eps)).mean()
-            tv_y = (g_y * torch.sqrt(dy**2 + eps)).mean()
-            L_tv = tv_x + tv_y
-            
-            # 掩码损失
-            intensity = I.mean(dim=1, keepdim=True)  # grayscale
-            mask = (intensity > th).float()
-            L_mask = ((1 - mask) * (specular**2)).mean()
+        if '2.2' in self.opt.change_type:
+            lambda_sparse, lambda_tv, lambda_mask, lambda_nonneg, lambda_encourage, th, c, eps = 0.001, 0.1, 10.0, 1.0, 0.01, 0.9, 1.0, 1e-6
+            lambda_entropy=0.01
+            for frame_id in self.opt.frame_ids:
+                specular = outputs[("specular", 0, frame_id)]
+                I = inputs[("color_aug", frame_id, 0)]
+                
+                # 稀疏损失
+                L_sparse = torch.abs(specular).mean()
+                
+                # 非各向同性平滑 TV
+                dx = specular[:, :, 1:, :] - specular[:, :, :-1, :]
+                dy = specular[:, :, :, 1:] - specular[:, :, :, :-1]
+                grad_I_x = I[:, :, 1:, :] - I[:, :, :-1, :]
+                grad_I_y = I[:, :, :, 1:] - I[:, :, :, :-1]
+                g_x = torch.exp(-c * torch.abs(grad_I_x.mean(dim=1, keepdim=True)))
+                g_y = torch.exp(-c * torch.abs(grad_I_y.mean(dim=1, keepdim=True)))
+                tv_x = (g_x * torch.sqrt(dx**2 + eps)).mean()
+                tv_y = (g_y * torch.sqrt(dy**2 + eps)).mean()
+                L_tv = tv_x + tv_y
+                
+                # 掩码损失
+                intensity = I.mean(dim=1, keepdim=True)  # grayscale
+                mask = (intensity > th).float()
+                L_mask = ((1 - mask) * (specular**2)).mean()
 
-            # 非负损失
-            L_nonneg = torch.mean(torch.clamp(-specular, min=0.0)) + torch.mean(torch.clamp(specular - 1.0, min=0.0))
-            
-            # 新增鼓励项：在mask区域内鼓励H非零且不小（参考论文中区域限制和强度假设，确保mask内H有显著值）
-            L_encourage = - (specular * mask).mean()  # 负号鼓励H在mask内增大
+                # 非负损失
+                L_nonneg = torch.mean(torch.clamp(-specular, min=0.0)) + torch.mean(torch.clamp(specular - 1.0, min=0.0))
+                
+                # 新增鼓励项：在mask区域内鼓励H非零且不小（参考论文中区域限制和强度假设，确保mask内H有显著值）
+                L_encourage = - (specular * mask).mean()  # 负号鼓励H在mask内增大
 
-            # 鼓励非零分布 (但保持稀疏)
-            H_clamp = torch.clamp(specular, eps, 1-eps)  # avoid log0
-            L_entropy = - (H_clamp * torch.log(H_clamp) + (1 - H_clamp) * torch.log(1 - H_clamp)).mean()
+                # 鼓励非零分布 (但保持稀疏)
+                H_clamp = torch.clamp(specular, eps, 1-eps)  # avoid log0
+                L_entropy = - (H_clamp * torch.log(H_clamp) + (1 - H_clamp) * torch.log(1 - H_clamp)).mean()
+                
+                # 总损失：稀疏性 + 平滑性 + 其他 + 熵损失
+                loss_specular_smooth += lambda_sparse * L_sparse + lambda_tv * L_tv + lambda_mask * L_mask + lambda_nonneg * L_nonneg + lambda_encourage * L_encourage + lambda_entropy * L_entropy
             
-            # 总损失：稀疏性 + 平滑性 + 其他 + 熵损失
-            loss_specular_smooth += lambda_sparse * L_sparse + lambda_tv * L_tv + lambda_mask * L_mask + lambda_nonneg * L_nonneg + lambda_encourage * L_encourage + lambda_entropy * L_entropy
-        
         # 修改2.4：增加对shading的过密纹理的损失
-        for frame_id in self.opt.frame_ids:
-            shading = outputs[("shading", 0, frame_id)]
-            I = inputs[("color_aug", frame_id, 0)]
-            # 新增shading平滑损失：非各向同性TV，惩罚S的高频纹理，确保S片段仿射/低频
-            dx_s = shading[:, :, 1:, :] - shading[:, :, :-1, :]
-            dy_s = shading[:, :, :, 1:] - shading[:, :, :, :-1]
-            g_x_s = torch.exp(-c * torch.abs(grad_I_x.mean(dim=1, keepdim=True)))
-            g_y_s = torch.exp(-c * torch.abs(grad_I_y.mean(dim=1, keepdim=True)))
-            tv_x_s = (g_x_s * torch.sqrt(dx_s**2 + eps)).mean()
-            tv_y_s = (g_y_s * torch.sqrt(dy_s**2 + eps)).mean()
-            L_shading_tv = tv_x_s + tv_y_s
-            loss_shading_smoothness += L_shading_tv
+        if '2.4' in self.opt.change_type:
+            for frame_id in self.opt.frame_ids:
+                shading = outputs[("shading", 0, frame_id)]
+                I = inputs[("color_aug", frame_id, 0)]
+                # 新增shading平滑损失：非各向同性TV，惩罚S的高频纹理，确保S片段仿射/低频
+                dx_s = shading[:, :, 1:, :] - shading[:, :, :-1, :]
+                dy_s = shading[:, :, :, 1:] - shading[:, :, :, :-1]
+                g_x_s = torch.exp(-c * torch.abs(grad_I_x.mean(dim=1, keepdim=True)))
+                g_y_s = torch.exp(-c * torch.abs(grad_I_y.mean(dim=1, keepdim=True)))
+                tv_x_s = (g_x_s * torch.sqrt(dx_s**2 + eps)).mean()
+                tv_y_s = (g_y_s * torch.sqrt(dy_s**2 + eps)).mean()
+                L_shading_tv = tv_x_s + tv_y_s
+                loss_shading_smoothness += L_shading_tv
         
         # 总损失计算 - 使用加权求和整合所有损失项
         # 各项权重通过超参数控制，在options.py中设置
@@ -595,6 +594,7 @@ class Trainer:
         losses["albedo_consistency_loss"] = loss_albedo_consistency  # 反照率一致性损失
         losses["reprojection_loss"] = loss_reprojection  # 映射-重建损失
         losses["specular_smoothness_loss"] = loss_specular_smooth  # 镜面反射稀疏性损失
+        losses["shading_smoothness_loss"] = loss_shading_smoothness
         
         return losses
     

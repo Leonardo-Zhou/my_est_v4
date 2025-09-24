@@ -18,14 +18,15 @@ def setup_debug_args():
         
         # 直接设置参数值
         opts.load_weights_folder = "./logs/nonlambertian_2025-08-28-21-59-37/models/weights_19"
-        # opts.load_weights_folder = "./logs/nonlambertian_2025-08-28-21-59-37/models/weights_19"
-
+        opts.load_weights_folder = "./logs_v2/Change2+4/models/weights_21"
+        change_name = '1.1+2.2+2.3+2.4'
         opts.data_path = "/mnt/data/publicData/MICCAI19_SCARED/train"
         opts.log_dir = "./logs_v2"
         opts.num_epochs = 30
         opts.batch_size = 12
         opts.start_pps_epoch = 20
-        opts.model_name = "Change2.4"
+        opts.change_type = change_name
+        opts.model_name = f"Change{change_name}"
         
         # 可以添加更多调试友好的参数
         # opts.num_workers = 1  # 单线程，便于调试

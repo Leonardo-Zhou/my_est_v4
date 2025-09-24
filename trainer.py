@@ -347,31 +347,33 @@ class Trainer:
 
             # Final reconstruction with adjusted shading
             # 修改1.1：将warp后的图像只与shading作用，而不考虑specular，形成lambertian模型。
-            # outputs[("reprojection_color_warp", 0, frame_id)] = (
-            #     outputs[("albedo_warp", 0, frame_id)] * outputs[("shading_adjust_warp", 0, frame_id)] +
-            #     outputs[("specular_warp", 0, frame_id)]
-            # )
+
             # outputs[("reprojection_color_warp", 0, frame_id)] = (
             #     outputs[("albedo_warp", 0, frame_id)] * outputs[("shading", 0, 0)] +
             #     outputs[("specular", 0, 0)]
             # )
-
-            outputs[("reprojection_color_warp", 0, frame_id)] = (
-                outputs[("albedo_warp", 0, frame_id)] * outputs[("shading", 0, 0)]
-            )
+            if '1.1' in self.opt.change_type:
+                outputs[("reprojection_color_warp", 0, frame_id)] = (
+                    outputs[("albedo_warp", 0, frame_id)] * outputs[("shading", 0, 0)]
+                )
+            else:
+                outputs[("reprojection_color_warp", 0, frame_id)] = (
+                    outputs[("albedo_warp", 0, frame_id)] * outputs[("shading_adjust_warp", 0, frame_id)] +
+                    outputs[("specular_warp", 0, frame_id)]
+                )
 
         # 修改1.3：在达到一定的epoch后，计算pps的部分，使用pps*Albedo作为监督信号
+        if '1.3' in self.opt.change_type:
+            if self.opt.start_pps_epoch <= self.epoch:
+                pps_params = calculate_pps(1.0/depth, inputs[("color_aug", 0, 0)], inputs[("K", 0)][:, :3, :3], self.light, self.light_dir, None)
+                lambertian_result = calculate_lambertian(pps_params, outputs[("albedo", 0, 0)])
+                outputs[("lambertian", 0, 0)] = lambertian_result['lambertian']
+                outputs[("PPS", 0, 0)] = lambertian_result['PPS']
 
-        # if self.opt.start_pps_epoch <= self.epoch:
-        #     pps_params = calculate_pps(1.0/depth, inputs[("color_aug", 0, 0)], inputs[("K", 0)][:, :3, :3], self.light, self.light_dir)
-        #     lambertian_result = calculate_lambertian(pps_params, outputs[("albedo", 0, 0)])
-        #     outputs[("lambertian", 0, 0)] = lambertian_result['lambertian']
-        #     outputs[("PPS", 0, 0)] = lambertian_result['PPS']
-
-        #     for frame_id in self.opt.frame_ids[1:]:
-        #         outputs[("reprojection_color_warp", 0, frame_id)] = (
-        #             handle_albedo(outputs[("albedo_warp", 0, frame_id)]) * outputs[("PPS", 0, 0)]
-        #         )
+                for frame_id in self.opt.frame_ids[1:]:
+                    outputs[("reprojection_color_warp", 0, frame_id)] = (
+                        handle_albedo(outputs[("albedo_warp", 0, frame_id)]) * outputs[("PPS", 0, 0)]
+                    )
 
     def compute_reprojection_loss(self, pred, target):
         """计算重投影损失（重建损失）
@@ -452,44 +454,45 @@ class Trainer:
                 ).sum() / mask_sum
 
         # 3. 映射-重建损失 (Mapping-Synthesis Loss)
-        # 目的：确保经过视角变换和光照调整后的重建图像与目标图像一致
-        # 实现：将相邻帧的特征warp到当前帧，用调整后的光照重建图像
-        # 修改1.6：添加对PPS损失的支持
-        for frame_id in self.opt.frame_ids[1:]:
-            mask = outputs[("valid_mask", 0, frame_id)]
-            mask_sum = mask.sum()
-            if mask_sum > 0:  # 避免除零错误
-                loss_reprojection += (
-                    self.compute_reprojection_loss(
-                        inputs[("color_aug", 0, 0)],   # 当前帧的真实图像（目标）
-                        outputs[("reprojection_color_warp", 0, frame_id)]  # warp+调整后的重建图像
-                    ) * mask  # 只计算有效区域的损失
-                ).sum() / mask_sum
-        # if self.opt.start_pps_epoch >= self.epoch:
-        #     for frame_id in self.opt.frame_ids[1:]:
-        #         mask = outputs[("valid_mask", 0, frame_id)]
-        #         mask_sum = mask.sum()
-        #         if mask_sum > 0:  # 避免除零错误
-        #             loss_reprojection += (
-        #                 self.compute_reprojection_loss(
-        #                     inputs[("color_aug", 0, 0)],   # 当前帧的真实图像（目标）
-        #                     outputs[("reprojection_color_warp", 0, frame_id)]  # warp+调整后的重建图像
-        #                 ) * mask  # 只计算有效区域的损失
-        #             ).sum() / mask_sum
+        # 修改1.3：添加对PPS损失的支持
 
-        # else:
-        #     for frame_id in self.opt.frame_ids[1:]:
-        #         mask = outputs[("valid_mask", 0, frame_id)]
-        #         mask_sum = mask.sum()
-        #         if mask_sum > 0:  # 避免除零错误
-        #             loss_reprojection += (
-        #                 self.compute_reprojection_loss(
-        #                     outputs[("lambertian", 0, 0)],   # 当前帧的真实图像（目标）
-        #                     outputs[("reprojection_color_warp", 0, frame_id)]  # warp+调整后的重建图像
-        #                 ) * mask  # 只计算有效区域的损失
-        #             ).sum() / mask_sum
+            
+        if '1.3' in self.opt.change_type:
+            if self.opt.start_pps_epoch >= self.epoch:
+                for frame_id in self.opt.frame_ids[1:]:
+                    mask = outputs[("valid_mask", 0, frame_id)]
+                    mask_sum = mask.sum()
+                    if mask_sum > 0:  # 避免除零错误
+                        loss_reprojection += (
+                            self.compute_reprojection_loss(
+                                inputs[("color_aug", 0, 0)],   # 当前帧的真实图像（目标）
+                                outputs[("reprojection_color_warp", 0, frame_id)]  # warp+调整后的重建图像
+                            ) * mask  # 只计算有效区域的损失
+                        ).sum() / mask_sum
 
+            else:
+                for frame_id in self.opt.frame_ids[1:]:
+                    mask = outputs[("valid_mask", 0, frame_id)]
+                    mask_sum = mask.sum()
+                    if mask_sum > 0:  # 避免除零错误
+                        loss_reprojection += (
+                            self.compute_reprojection_loss(
+                                outputs[("lambertian", 0, 0)],   # 当前帧的真实图像（目标）
+                                outputs[("reprojection_color_warp", 0, frame_id)]  # warp+调整后的重建图像
+                            ) * mask  # 只计算有效区域的损失
+                        ).sum() / mask_sum
 
+        else:
+            for frame_id in self.opt.frame_ids[1:]:
+                mask = outputs[("valid_mask", 0, frame_id)]
+                mask_sum = mask.sum()
+                if mask_sum > 0:  # 避免除零错误
+                    loss_reprojection += (
+                        self.compute_reprojection_loss(
+                            inputs[("color_aug", 0, 0)],   # 当前帧的真实图像（目标）
+                            outputs[("reprojection_color_warp", 0, frame_id)]  # warp+调整后的重建图像
+                        ) * mask  # 只计算有效区域的损失
+                    ).sum() / mask_sum
 
         # 4. 深度平滑损失 (Depth Smoothness Loss)
         # 目的：鼓励深度图在纹理平滑区域保持平滑，在边缘区域允许变化
@@ -579,7 +582,13 @@ class Trainer:
                 writer.add_image("shading/{}".format(j), outputs[("shading", 0, 0)][j].data, self.step)
             if ("specular", 0, 0) in outputs:
                 writer.add_image("specular/{}".format(j), outputs[("specular", 0, 0)][j].data, self.step)
-
+            if ("PPS_Albedo", 0, 0) in outputs:
+                writer.add_image("PPS_Albedo/{}".format(j), outputs[("lambertian", 0, 0)][j].data, self.step)
+            if ("albedo_shading", 0, 0) in outputs:
+                writer.add_image("Shading_Albedo/{}".format(j), outputs[("albedo_shading", 0, 0)][j].data, self.step)
+            if ("PPS", 0, 0) in outputs:
+                writer.add_image("PPS/{}".format(j), outputs[("PPS", 0, 0)][j].data, self.step)
+                
     def save_opts(self):
         """Save options to disk so we know what we ran this experiment with"""
         models_dir = os.path.join(self.log_path, "models")

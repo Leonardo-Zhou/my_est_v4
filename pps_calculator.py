@@ -183,7 +183,7 @@ def calculate_per_pixel_lighting(pc, light_pos, light_dir, mu):
 
 def calculate_pps_parameters(depth, original_image, intrinsic_matrix,
                            light_pos=None, light_dir=None, mu=None,
-                           depth_is_along_ray=False):
+                           depth_is_along_ray=False, ori_shape=(1024, 1280)):
     """
     计算PPSNet的光照参数A(X)、L(X)、N(X)
     
@@ -232,15 +232,18 @@ def calculate_pps_parameters(depth, original_image, intrinsic_matrix,
     b, _, h, w = depth.shape
     
     # 处理原始图像形状
-    if len(original_image.shape) == 4 and original_image.shape[1] == 3:
-        # (b, 3, h_orig, w_orig)
-        h_orig, w_orig = original_image.shape[2:]
-    elif len(original_image.shape) == 4 and original_image.shape[3] == 3:
-        # (b, h_orig, w_orig, 3) -> 转换为 (b, 3, h_orig, w_orig)
-        original_image = original_image.permute(0, 3, 1, 2)
-        h_orig, w_orig = original_image.shape[2:]
+    if not ori_shape:
+        if len(original_image.shape) == 4 and original_image.shape[1] == 3:
+            # (b, 3, h_orig, w_orig)
+            h_orig, w_orig = original_image.shape[2:]
+        elif len(original_image.shape) == 4 and original_image.shape[3] == 3:
+            # (b, h_orig, w_orig, 3) -> 转换为 (b, 3, h_orig, w_orig)
+            original_image = original_image.permute(0, 3, 1, 2)
+            h_orig, w_orig = original_image.shape[2:]
+        else:
+            raise ValueError("原始图像格式不支持")
     else:
-        raise ValueError("原始图像格式不支持")
+        h_orig, w_orig = ori_shape
     
     # 处理相机内参
     if len(intrinsic_matrix.shape) == 2:
@@ -358,7 +361,7 @@ def calculate_lambertian(pps_params, albedo):
     N_norm = torch.nn.functional.normalize(N, p=2, dim=1)
 
     # 计算L · N (点积)，与PPSNet原始实现一致
-    L_dot_N = torch.sum(L_norm * N_norm, dim=1, keepdim=True)  # (b, 1, h, w)
+    L_dot_N = - torch.sum(L_norm * N_norm, dim=1, keepdim=True)  # (b, 1, h, w)
     
     # 限制范围到[-1, 1]，与原始实现一致
     L_dot_N = torch.clamp(L_dot_N, -1, 1)
@@ -368,11 +371,10 @@ def calculate_lambertian(pps_params, albedo):
     # 归一化albedo
     # 按batch和channel分别归一化
     albedo_vis = handle_albedo(albedo)
-    lambertian = albedo_vis * PPS
-    if lambertian.mean() < 0:
-        lambertian = -lambertian
     if PPS.mean() < 0:
         PPS = -PPS
+    PPS = torch.clamp(PPS, 0.0, 1.0)
+    lambertian = albedo_vis * PPS
 
     result = {
         'lambertian': lambertian,
